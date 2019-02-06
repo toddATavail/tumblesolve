@@ -35,6 +35,7 @@
 //!
 
 use std::fmt::{Display, Formatter, Result};
+use std::result;
 
 /******************************************************************************
  *                                  Stones.                                   *
@@ -242,6 +243,22 @@ struct Board
 
 impl Board
 {
+	/// Parse a board from the specified string. The string should depict a
+	/// grid. The length of the longest line and the number of occupied rows
+	/// establish the width and height, respectively, of the resultant board.
+	/// Spacing is dynamically determined, but spacing between columns and rows
+	/// must be consistent. It is unnecessary to pad the end of a line with
+	/// whitespace; a line may simply stop with the last occupied column.
+	/// Optionally, following the board, three hyphens (`---`) are permitted,
+	/// after which the legend for the board must occur. The legend is specified
+	/// as a linefeed-separated list of `key = value` options.
+	fn parse (tsb: &str) -> BoardResult
+	{
+		let mut width = 0u32;
+		let mut height = 0u32;
+		unimplemented!()
+	}
+
 	/// Apply the specified closure to the [stone] at `(x,y)`, where the origin
 	/// `(0,0)` is the uppermost leftmost grid cell.
 	///
@@ -303,14 +320,6 @@ impl Board
 	}
 }
 
-impl Board
-{
-	fn parse (tsb: &str) -> Board
-	{
-		unimplemented!()
-	}
-}
-
 impl Display for Board
 {
 	fn fmt (&self, f: &mut Formatter) -> Result
@@ -327,3 +336,18 @@ impl Display for Board
 		Ok(())
 	}
 }
+
+/// The enumeration of errors that can result from [parsing] a [board].
+///
+/// [parsing]: Board::parse
+/// [board]: Board
+enum ParseError
+{
+	/// Inconsistent column spacing.
+	InconsistentColumnSpacing,
+
+	/// Inconsistent row spacing.
+	InconsistentRowSpacing
+}
+
+type BoardResult = result::Result<Board, ParseError>;

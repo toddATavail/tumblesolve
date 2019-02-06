@@ -1,0 +1,7 @@
+[package]
+name = "tumblesolve"
+version = "0.1.0"
+authors = ["Todd L. Smith <todd@availlang.org>"]
+edition = "2018"
+
+[dependencies]

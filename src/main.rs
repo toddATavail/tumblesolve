@@ -31,7 +31,37 @@
 
 mod board;
 
-fn main ()
+use std::fs::read_to_string;
+use std::io::Error;
+use board::{Board, ParseError};
+
+fn main () -> Result<(), AppError>
 {
-    println!("Hello, world!");
+    let contents = read_to_string("examples/board000.tsb")?;
+    let board = Board::parse(&contents)?;
+    println!("{}", board);
+    Ok(())
+}
+
+#[derive(Debug)]
+enum AppError
+{
+    IOError (Error),
+    ParseError (ParseError)
+}
+
+impl From<ParseError> for AppError
+{
+    fn from (error: ParseError) -> Self
+   	{
+   		AppError::ParseError(error)
+   	}
+}
+
+impl From<Error> for AppError
+{
+    fn from (error: Error) -> Self
+   	{
+   		AppError::IOError(error)
+   	}
 }

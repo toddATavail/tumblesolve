@@ -35,7 +35,10 @@
 //!
 
 use std::fmt::{Display, Formatter, Result};
+use std::collections::HashMap;
+use std::num::ParseIntError;
 use std::result;
+use tokesies::*;
 
 /******************************************************************************
  *                                  Stones.                                   *
@@ -48,7 +51,7 @@ trait Stone
 	fn for_board (&self, board: &Board) -> Self;
 }
 
-/// The absence of stoniness.
+/// The absence of stoniness. Always represented by ' '
 #[derive(Copy, Clone, Debug)]
 struct NoStone;
 
@@ -128,8 +131,8 @@ impl Display for WildStone
 }
 
 /// A toggle stone cannot be matched directly. It alternately obstructs and
-/// permits access to stones above it. Initially open is represented by `O`,
-/// initially closed is represented by `X`.
+/// permits access to stones above it. Initially open is represented by `/`,
+/// initially closed is represented by `-`.
 #[derive(Copy, Clone, Debug)]
 struct ToggleStone
 {
@@ -160,7 +163,7 @@ impl Display for ToggleStone
 	/// [`for_board`]: Stone::for_board
 	fn fmt (&self, f: &mut Formatter) -> Result
 	{
-		write!(f, "{}", if self.phase & 1 == 0 { "O" } else { "X" })
+		write!(f, "{}", if self.phase & 1 == 0 { "/" } else { "-" })
 	}
 }
 
@@ -209,7 +212,7 @@ impl Display for AnyStone
  ******************************************************************************/
 
 /// The state of the game board during a particular turn.
-struct Board
+pub struct Board
 {
 	/// The current turn. This, combined with initial [phase], impacts the
 	/// obstructiveness of [toggle stones].
@@ -244,19 +247,100 @@ struct Board
 impl Board
 {
 	/// Parse a board from the specified string. The string should depict a
-	/// grid. The length of the longest line and the number of occupied rows
-	/// establish the width and height, respectively, of the resultant board.
-	/// Spacing is dynamically determined, but spacing between columns and rows
-	/// must be consistent. It is unnecessary to pad the end of a line with
-	/// whitespace; a line may simply stop with the last occupied column.
-	/// Optionally, following the board, three hyphens (`---`) are permitted,
-	/// after which the legend for the board must occur. The legend is specified
-	/// as a linefeed-separated list of `key = value` options.
-	fn parse (tsb: &str) -> BoardResult
+	/// legend and a grid. The length of the longest line and the number of
+	/// occupied rows establish the width and height, respectively, of the
+	/// resultant board.
+	///
+	/// The string should begin with a legend, specified as a linefeed-separated
+	/// list of `key = value` options. Following the legend are three hyphens
+	/// (`---`), after which the board must occur. The grid terminates with the
+	/// first blank line.
+	///
+	/// Column spacing defaults to `1`, but may be overridden by the
+	/// `columnspacing` property. Row spacing defaults to `1`, but may be
+	/// overridden by the `rowspacing` property.
+	pub fn parse (tsb: &str) -> BoardResult
 	{
-		let mut width = 0u32;
-		let mut height = 0u32;
-		unimplemented!()
+		use self::ParseError::*;
+		let opt_index = tsb.find("\n---\n");
+		if let None = opt_index
+		{
+			return Err(MissingSeparator)
+		}
+		let index = opt_index.unwrap();
+		let mut legend = Board::parse_legend(&tsb[..=index])?;
+		let grid = Board::parse_grid(&tsb[index+5..], &mut legend)?;
+		Ok(Board
+		{
+			turn: 0,
+			wild_colors: 0,
+			width: 0,
+			height: 0,
+			grid
+		})
+	}
+
+	/// Parse a board legend from the specified string. A legend is specified as
+	/// a linefeed-separated list of `key = value` options. A board legend is
+	/// terminated by a line containing only three hyphens (`---`).
+	fn parse_legend (legend: &str) -> LegendResult
+	{
+		use self::LegendParseState::*;
+		use self::PropertyKey::*;
+		use self::PropertyValue::*;
+		use self::ParseError::*;
+		let mut key = None::<PropertyKey>;
+		let mut state = ExpectKeyOrLinefeedOrEnd;
+		let mut map = PropertyMap::new();
+		let tokens = FilteredTokenizer::new(
+			LegendFilter, legend).collect::<Vec<Token>>();
+		for token in tokens
+		{
+			match (state, token.term.as_ref())
+			{
+				(ExpectKeyOrLinefeedOrEnd, "=") =>
+					return Err(InvalidPropertySyntax),
+				(ExpectKeyOrLinefeedOrEnd, "\n") =>
+					state = ExpectKeyOrLinefeedOrEnd,
+				(ExpectKeyOrLinefeedOrEnd, term) =>
+				{
+					key = Some(match term
+					{
+						"columnspacing" => ColumnSpacing,
+						"rowspacing" => RowSpacing,
+						unknown => Unknown(unknown.to_string())
+					});
+					state = ExpectEquals;
+				},
+				(ExpectEquals, "=") => state = ExpectValue,
+				(ExpectEquals, _) => return Err(InvalidPropertySyntax),
+				(ExpectValue, term) =>
+				{
+					let unwrapped = key.unwrap();
+					let _ = match unwrapped
+					{
+						ColumnSpacing => map.insert(
+							unwrapped, U32(term.parse::<u32>()?)),
+						RowSpacing => map.insert(
+							unwrapped, U32(term.parse::<u32>()?)),
+						Unknown(_) => map.insert(
+							unwrapped, String(term.to_string()))
+					};
+					key = None;
+					state = ExpectKeyOrLinefeedOrEnd;
+				},
+				(ExpectLinefeed, "\n") => state = ExpectKeyOrLinefeedOrEnd,
+				(ExpectLinefeed, _) => return Err(InvalidPropertySyntax)
+			}
+		}
+		if state == ExpectKeyOrLinefeedOrEnd { Ok(map) }
+		else { Err(InvalidPropertySyntax) }
+	}
+
+	/// Parse a grid from the specified string.
+	fn parse_grid (grid: &str, legend: &mut PropertyMap) -> GridResult
+	{
+		Ok(vec![])
 	}
 
 	/// Apply the specified closure to the [stone] at `(x,y)`, where the origin
@@ -337,17 +421,97 @@ impl Display for Board
 	}
 }
 
+/// A board property key.
+#[derive(PartialEq, Eq, Hash, Debug)]
+enum PropertyKey
+{
+	/// The column spacing.
+	ColumnSpacing,
+
+	/// The row spacing.
+	RowSpacing,
+
+	/// An unknown property.
+	Unknown (String)
+}
+
+/// A board property value.
+#[derive(PartialEq, Eq, Hash, Debug)]
+enum PropertyValue
+{
+	/// An arbitrary `u32`.
+	U32 (u32),
+
+	/// Arbitrary text.
+	String (String)
+}
+
+/******************************************************************************
+ *                              Parsing support.                              *
+ ******************************************************************************/
+
+pub type BoardResult = result::Result<Board, ParseError>;
+type PropertyMap = HashMap<PropertyKey, PropertyValue>;
+type LegendResult =
+	result::Result<HashMap<PropertyKey, PropertyValue>, ParseError>;
+type GridResult = result::Result<Vec<AnyStone>, ParseError>;
+
 /// The enumeration of errors that can result from [parsing] a [board].
 ///
 /// [parsing]: Board::parse
 /// [board]: Board
-enum ParseError
+#[derive(Debug)]
+pub enum ParseError
 {
-	/// Inconsistent column spacing.
-	InconsistentColumnSpacing,
+	/// Missing separator between legend and grid.
+	MissingSeparator,
 
-	/// Inconsistent row spacing.
-	InconsistentRowSpacing
+	/// Invalid property syntax in board legend.
+	InvalidPropertySyntax,
+
+	/// Invalid property value for well-known property key.
+	InvalidPropertyValue
 }
 
-type BoardResult = result::Result<Board, ParseError>;
+impl From<ParseIntError> for ParseError
+{
+	fn from (_error: ParseIntError) -> Self
+	{
+		ParseError::InvalidPropertyValue
+	}
+}
+
+/// The token filter for the board legend.
+struct LegendFilter;
+
+impl filters::Filter for LegendFilter
+{
+	fn on_char (&self, c: &char) -> (bool, bool)
+	{
+		match *c
+		{
+			' ' => (true, false),
+			'\t' => (true, false),
+			'=' => (true, true),
+			'\n' => (true, true),
+			_ => (false, false)
+		}
+	}
+}
+
+/// A parse expectation for a board legend parser.
+#[derive(PartialEq, Eq)]
+enum LegendParseState
+{
+	/// Expect either a new property key, a linefeed, or end-of-string.
+	ExpectKeyOrLinefeedOrEnd,
+
+	/// Expect an equals sign (`=`).
+	ExpectEquals,
+
+	/// Expect a property value.
+	ExpectValue,
+
+	/// Expect a linefeed.
+	ExpectLinefeed
+}

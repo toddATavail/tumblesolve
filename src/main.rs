@@ -39,6 +39,7 @@ fn main () -> Result<(), AppError>
 {
     let contents = read_to_string("examples/board000.tsb")?;
     let board = Board::parse(&contents)?;
+    println!("{:#?}", board);
     println!("{}", board);
     Ok(())
 }

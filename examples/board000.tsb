@@ -1,9 +1,12 @@
-columnspacing = 1
-rowspacing = 1
+width = 5
+wild = rgb
 
 ---
 
-r r r r r r r r
-r g g g g g g g
-g g b b b b b b
-b     b       b
+r r * r r
+r g g * g
+g g b b *
+b _ b _ b
+y _ _ _ _
+y _ _ _ _
+y / + / _

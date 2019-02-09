@@ -51,8 +51,8 @@ trait Stone
 	fn for_board (&self, board: &Board) -> Self;
 }
 
-/// The absence of stoniness. Always represented by ' '
-#[derive(Copy, Clone, Debug)]
+/// The absence of stoniness. Always represented by '_'.
+#[derive(Copy, Clone, Hash, Debug)]
 struct NoStone;
 
 impl Stone for NoStone
@@ -68,12 +68,12 @@ impl Display for NoStone
 {
 	fn fmt (&self, f: &mut Formatter) -> Result
 	{
-		write!(f, " ")
+		write!(f, "_")
 	}
 }
 
 /// An ordinary stone.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Hash, Debug)]
 struct OrdinaryStone
 {
 	/// The character that represents this ordinary stone.
@@ -107,10 +107,10 @@ impl Display for OrdinaryStone
 /// A wild stone has potential to provide one or more colors; all other wild
 /// stones lose a color whenever a wild stone is committed to a particular
 /// color. A wild stone's color space is a property of the [board], not of the
-/// wild stone itself (featherweight pattern). Always represented by `*`.
+/// wild stone itself (flyweight pattern). Always represented by `*`.
 ///
 /// [board]: Board
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Hash, Debug)]
 struct WildStone;
 
 impl Stone for WildStone
@@ -132,8 +132,8 @@ impl Display for WildStone
 
 /// A toggle stone cannot be matched directly. It alternately obstructs and
 /// permits access to stones above it. Initially open is represented by `/`,
-/// initially closed is represented by `-`.
-#[derive(Copy, Clone, Debug)]
+/// initially closed is represented by `+`.
+#[derive(Copy, Clone, Hash, Debug)]
 struct ToggleStone
 {
 	/// The phase of the toggle stone, either `0` or `1`. The [turn number] is
@@ -163,12 +163,12 @@ impl Display for ToggleStone
 	/// [`for_board`]: Stone::for_board
 	fn fmt (&self, f: &mut Formatter) -> Result
 	{
-		write!(f, "{}", if self.phase & 1 == 0 { "/" } else { "-" })
+		write!(f, "{}", if self.phase & 1 == 0 { "/" } else { "+" })
 	}
 }
 
 /// An arbitrary stone.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Hash, Debug)]
 enum AnyStone
 {
 	None (NoStone),
@@ -211,7 +211,11 @@ impl Display for AnyStone
  *                                   Board.                                   *
  ******************************************************************************/
 
+/// The default board width.
+const DEFAULT_WIDTH: u32 = 5;
+
 /// The state of the game board during a particular turn.
+#[derive(Debug)]
 pub struct Board
 {
 	/// The current turn. This, combined with initial [phase], impacts the
@@ -241,7 +245,10 @@ pub struct Board
 	height: u32,
 
 	/// The physical board, as a single linear vector.
-	grid: Vec<AnyStone>
+	grid: Vec<AnyStone>,
+
+	/// The property map.
+	properties: PropertyMap
 }
 
 impl Board
@@ -262,28 +269,66 @@ impl Board
 	pub fn parse (tsb: &str) -> BoardResult
 	{
 		use self::ParseError::*;
-		let opt_index = tsb.find("\n---\n");
-		if let None = opt_index
+		let mut colors = ColorMap::new();
+		let mut next_color = 1;
+		let mut legend = PropertyMap::new();
+		legend.insert(PropertyKey::Width, PropertyValue::U32(DEFAULT_WIDTH));
+		let index = match tsb.find("\n---\n")
 		{
-			return Err(MissingSeparator)
+			Some(index) =>
+			{
+				Board::parse_legend(
+					&tsb[..=index],
+					&mut legend,
+					&mut colors,
+					&mut next_color)?;
+				index + 5
+			},
+			None => 0
+		};
+		let grid = Board::parse_grid(
+			&tsb[index..],
+			&mut legend,
+			&mut colors,
+			&mut next_color)?;
+		let wild_colors = match legend.get(&PropertyKey::Wild)
+		{
+			Some(PropertyValue::U32(mask)) => *mask,
+			_ => 0
+		};
+		let width = match legend.get(&PropertyKey::Width)
+		{
+			Some(PropertyValue::U32(width)) => *width,
+			_ => unreachable!()
+		};
+		let height = (grid.len() as u32 + (width - 1)) / width;
+		if width * height != grid.len() as u32
+		{
+			return Err(IncompleteBoard)
 		}
-		let index = opt_index.unwrap();
-		let mut legend = Board::parse_legend(&tsb[..=index])?;
-		let grid = Board::parse_grid(&tsb[index+5..], &mut legend)?;
 		Ok(Board
 		{
 			turn: 0,
-			wild_colors: 0,
-			width: 0,
-			height: 0,
-			grid
+			wild_colors,
+			width,
+			height,
+			grid,
+			properties: legend
 		})
 	}
 
 	/// Parse a board legend from the specified string. A legend is specified as
 	/// a linefeed-separated list of `key = value` options. A board legend is
-	/// terminated by a line containing only three hyphens (`---`).
-	fn parse_legend (legend: &str) -> LegendResult
+	/// terminated by a line containing only three hyphens (`---`). Populate the
+	/// supplied map. The color map and next color mask are provided to support
+	/// [wild stones].
+	///
+	/// [wild stones]: WildStone
+	fn parse_legend (
+		legend: &str,
+		map: &mut PropertyMap,
+		colors: &mut ColorMap,
+		next_color: &mut u32) -> LegendResult
 	{
 		use self::LegendParseState::*;
 		use self::PropertyKey::*;
@@ -291,7 +336,6 @@ impl Board
 		use self::ParseError::*;
 		let mut key = None::<PropertyKey>;
 		let mut state = ExpectKeyOrLinefeedOrEnd;
-		let mut map = PropertyMap::new();
 		let tokens = FilteredTokenizer::new(
 			LegendFilter, legend).collect::<Vec<Token>>();
 		for token in tokens
@@ -306,8 +350,8 @@ impl Board
 				{
 					key = Some(match term
 					{
-						"columnspacing" => ColumnSpacing,
-						"rowspacing" => RowSpacing,
+						"width" => Width,
+						"wild" => Wild,
 						unknown => Unknown(unknown.to_string())
 					});
 					state = ExpectEquals;
@@ -317,30 +361,70 @@ impl Board
 				(ExpectValue, term) =>
 				{
 					let unwrapped = key.unwrap();
-					let _ = match unwrapped
+					match unwrapped
 					{
-						ColumnSpacing => map.insert(
+						Width => map.insert(
 							unwrapped, U32(term.parse::<u32>()?)),
-						RowSpacing => map.insert(
-							unwrapped, U32(term.parse::<u32>()?)),
+						Wild =>
+						{
+							for c in term.chars()
+							{
+								if colors.get(&c) != None
+								{
+									return Err(RepeatedWildColor);
+								}
+								colors.insert(c, *next_color);
+								*next_color = *next_color << 1;
+							}
+							map.insert(unwrapped, U32(*next_color - 1))
+						},
 						Unknown(_) => map.insert(
 							unwrapped, String(term.to_string()))
 					};
 					key = None;
-					state = ExpectKeyOrLinefeedOrEnd;
+					state = ExpectLinefeed;
 				},
 				(ExpectLinefeed, "\n") => state = ExpectKeyOrLinefeedOrEnd,
 				(ExpectLinefeed, _) => return Err(InvalidPropertySyntax)
 			}
 		}
-		if state == ExpectKeyOrLinefeedOrEnd { Ok(map) }
+		if state == ExpectKeyOrLinefeedOrEnd { Ok(()) }
 		else { Err(InvalidPropertySyntax) }
 	}
 
 	/// Parse a grid from the specified string.
-	fn parse_grid (grid: &str, legend: &mut PropertyMap) -> GridResult
+	fn parse_grid (
+		grid: &str,
+		legend: &mut PropertyMap,
+		colors: &mut ColorMap,
+		next_color: &mut u32) -> GridResult
 	{
-		Ok(vec![])
+		use self::ParseError::*;
+		use self::AnyStone::*;
+		let mut vec = Vec::<AnyStone>::new();
+		let tokens = FilteredTokenizer::new(
+			StoneFilter, grid).collect::<Vec<Token>>();
+		for token in tokens
+		{
+			vec.push(match token.term.as_ref()
+			{
+				"_" => None(NoStone),
+				"*" => Wild(WildStone),
+				"/" => Toggle(ToggleStone {phase: 0}),
+				"+" => Toggle(ToggleStone {phase: 1}),
+				s @ _ =>
+				{
+					let c = s.chars().next().unwrap();
+					let color = *colors.entry(c).or_insert_with(|| {
+						let color = *next_color;
+						*next_color = *next_color << 1;
+						color
+					});
+					Ordinary(OrdinaryStone {rep: c, color})
+				}
+			});
+		}
+		Ok(vec)
 	}
 
 	/// Apply the specified closure to the [stone] at `(x,y)`, where the origin
@@ -414,8 +498,9 @@ impl Display for Board
 			{
 				let index = (row * self.width + column) as usize;
 				let stone = self.grid[index];
-				write!(f, "{}", stone)?;
+				write!(f, "{} ", stone)?;
 			}
+			writeln!(f);
 		}
 		Ok(())
 	}
@@ -425,11 +510,11 @@ impl Display for Board
 #[derive(PartialEq, Eq, Hash, Debug)]
 enum PropertyKey
 {
-	/// The column spacing.
-	ColumnSpacing,
+	/// The width, in stones, i.e., the row stride.
+	Width,
 
-	/// The row spacing.
-	RowSpacing,
+	/// The specification of colors for [wild stones](WildStone).
+	Wild,
 
 	/// An unknown property.
 	Unknown (String)
@@ -450,10 +535,10 @@ enum PropertyValue
  *                              Parsing support.                              *
  ******************************************************************************/
 
-pub type BoardResult = result::Result<Board, ParseError>;
+type BoardResult = result::Result<Board, ParseError>;
 type PropertyMap = HashMap<PropertyKey, PropertyValue>;
-type LegendResult =
-	result::Result<HashMap<PropertyKey, PropertyValue>, ParseError>;
+type ColorMap = HashMap<char, u32>;
+type LegendResult = result::Result<(), ParseError>;
 type GridResult = result::Result<Vec<AnyStone>, ParseError>;
 
 /// The enumeration of errors that can result from [parsing] a [board].
@@ -463,14 +548,17 @@ type GridResult = result::Result<Vec<AnyStone>, ParseError>;
 #[derive(Debug)]
 pub enum ParseError
 {
-	/// Missing separator between legend and grid.
-	MissingSeparator,
-
 	/// Invalid property syntax in board legend.
 	InvalidPropertySyntax,
 
 	/// Invalid property value for well-known property key.
-	InvalidPropertyValue
+	InvalidPropertyValue,
+
+	/// Repeated color in [wild stone](WildStone) specification.
+	RepeatedWildColor,
+
+	/// Incomplete board, i.e., the last row is not fully populated.
+	IncompleteBoard
 }
 
 impl From<ParseIntError> for ParseError
@@ -490,10 +578,8 @@ impl filters::Filter for LegendFilter
 	{
 		match *c
 		{
-			' ' => (true, false),
-			'\t' => (true, false),
-			'=' => (true, true),
-			'\n' => (true, true),
+			' ' | '\t' => (true, false),
+			'=' | '\n' => (true, true),
 			_ => (false, false)
 		}
 	}
@@ -514,4 +600,19 @@ enum LegendParseState
 
 	/// Expect a linefeed.
 	ExpectLinefeed
+}
+
+/// The token filter for the board grid.
+struct StoneFilter;
+
+impl filters::Filter for StoneFilter
+{
+	fn on_char (&self, c: &char) -> (bool, bool)
+	{
+		match *c
+		{
+			' ' | '\t' | '\n' => (true, false),
+			_ => (true, true)
+		}
+	}
 }

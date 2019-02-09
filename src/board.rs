@@ -51,7 +51,8 @@ trait Stone
 	fn for_board (&self, board: &Board) -> Self;
 }
 
-/// The absence of stoniness. Always represented by '_'.
+/// The absence of stoniness. Always represented by `'_'` in input, as `' '` in
+/// output.
 #[derive(Copy, Clone, Hash, Debug)]
 struct NoStone;
 
@@ -68,7 +69,7 @@ impl Display for NoStone
 {
 	fn fmt (&self, f: &mut Formatter) -> Result
 	{
-		write!(f, "_")
+		write!(f, " ")
 	}
 }
 
@@ -131,8 +132,8 @@ impl Display for WildStone
 }
 
 /// A toggle stone cannot be matched directly. It alternately obstructs and
-/// permits access to stones above it. Initially open is represented by `/`,
-/// initially closed is represented by `+`.
+/// permits access to stones above it. Initially open is represented by `'/'`,
+/// initially closed is represented by `'+'`.
 #[derive(Copy, Clone, Hash, Debug)]
 struct ToggleStone
 {
@@ -144,6 +145,15 @@ struct ToggleStone
 	/// [turn number]: Board::turn
 	/// [board]: Board
 	phase: u32
+}
+
+impl ToggleStone
+{
+	/// Answer `true` if the receiver is open, `false` otherwise.
+	fn is_open (&self) -> bool
+	{
+		self.phase & 1 == 0
+	}
 }
 
 impl Stone for ToggleStone
@@ -163,7 +173,7 @@ impl Display for ToggleStone
 	/// [`for_board`]: Stone::for_board
 	fn fmt (&self, f: &mut Formatter) -> Result
 	{
-		write!(f, "{}", if self.phase & 1 == 0 { "/" } else { "+" })
+		write!(f, "{}", if self.is_open() { "/" } else { "+" })
 	}
 }
 
@@ -352,7 +362,17 @@ impl Board
 					{
 						"width" => Width,
 						"wild" => Wild,
-						unknown => Unknown(unknown.to_string())
+						unknown =>
+						{
+							if unknown.len() == 1
+							{
+								Display(unknown.chars().next().unwrap())
+							}
+							else
+							{
+								Unknown(unknown.to_string())
+							}
+						}
 					});
 					state = ExpectEquals;
 				},
@@ -378,6 +398,14 @@ impl Board
 							}
 							map.insert(unwrapped, U32(*next_color - 1))
 						},
+						Display(c) =>
+						{
+							let s = format!(
+								"\u{001b}[38;5;{}m{}\u{001b}[0m",
+								term,
+								c);
+							map.insert(unwrapped, String(s))
+						},
 						Unknown(_) => map.insert(
 							unwrapped, String(term.to_string()))
 					};
@@ -395,11 +423,10 @@ impl Board
 	/// Parse a grid from the specified string.
 	fn parse_grid (
 		grid: &str,
-		legend: &mut PropertyMap,
+		_legend: &mut PropertyMap,
 		colors: &mut ColorMap,
 		next_color: &mut u32) -> GridResult
 	{
-		use self::ParseError::*;
 		use self::AnyStone::*;
 		let mut vec = Vec::<AnyStone>::new();
 		let tokens = FilteredTokenizer::new(
@@ -433,11 +460,10 @@ impl Board
 	/// [stone]: AnyStone
 	fn stone_do (
 		&self,
-		x: u32,
-		y: u32,
+		p: (u32, u32),
 		action: &mut dyn for<'r, 's> FnMut(&'r Board, &'s AnyStone))
 	{
-		let index = (y * self.width + x) as usize;
+		let index = (p.1 * self.width + p.0) as usize;
 		let stone = self.grid[index];
 		action(self, &stone)
 	}
@@ -446,11 +472,10 @@ impl Board
 	/// `(0,0)` is the uppermost leftmost grid cell.
 	fn mut_stone_do (
 		&mut self,
-		x: u32,
-		y: u32,
+		p: (u32, u32),
 		action: &mut dyn for<'r, 's> FnMut(&'r mut Board, &'s AnyStone))
 	{
-		let index = (y * self.width + x) as usize;
+		let index = (p.1 * self.width + p.0) as usize;
 		let stone = self.grid[index];
 		action(self, &stone)
 	}
@@ -466,7 +491,7 @@ impl Board
 		{
 			for column in 0..self.width
 			{
-				self.stone_do(row, column, action)
+				self.stone_do((row, column), action)
 			}
 		}
 	}
@@ -482,7 +507,7 @@ impl Board
 		{
 			for column in 0..self.width
 			{
-				self.mut_stone_do(row, column, action)
+				self.mut_stone_do((row, column), action)
 			}
 		}
 	}
@@ -492,19 +517,38 @@ impl Display for Board
 {
 	fn fmt (&self, f: &mut Formatter) -> Result
 	{
+		use self::AnyStone::*;
+		use self::PropertyKey::*;
+		use self::PropertyValue::*;
 		for row in 0..self.height
 		{
 			for column in 0..self.width
 			{
 				let index = (row * self.width + column) as usize;
 				let stone = self.grid[index];
-				write!(f, "{} ", stone)?;
+				match stone
+				{
+					Ordinary(o) =>
+					{
+						match self.properties.get(&Display(o.rep))
+						{
+							Some(String(display)) =>
+								write!(f, "{} ", display)?,
+							_ => write!(f, "{} ", o)?
+						}
+					},
+					_ => write!(f, "{} ", stone)?
+				};
 			}
-			writeln!(f);
+			writeln!(f)?;
 		}
 		Ok(())
 	}
 }
+
+/******************************************************************************
+ *                             Property support.                              *
+ ******************************************************************************/
 
 /// A board property key.
 #[derive(PartialEq, Eq, Hash, Debug)]
@@ -515,6 +559,9 @@ enum PropertyKey
 
 	/// The specification of colors for [wild stones](WildStone).
 	Wild,
+
+	/// The specification of display properties for a stone.
+	Display (char),
 
 	/// An unknown property.
 	Unknown (String)

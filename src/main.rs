@@ -28,25 +28,50 @@
 //
 
 #![feature(nll)]
+#![feature(exclusive_range_pattern)]
 
 mod board;
+mod solve;
 
+use std::env::args;
 use std::fs::read_to_string;
-use std::io::Error;
+use std::io::{Error, stdin};
 use board::{Board, ParseError};
 
 fn main () -> Result<(), AppError>
 {
-    let contents = read_to_string("examples/board000.tsb")?;
-    let board = Board::parse(&contents)?;
-    println!("{:#?}", board);
-    println!("{}", board);
+	let args: Vec<String> = args().collect();
+	let file = match args.get(1)
+	{
+		Some(file) => file,
+		None => return Err(AppError::UsageError)
+	};
+    let contents = read_to_string(file)?;
+    let mut board = Board::parse(&contents)?;
+	match board.solve()
+	{
+		Some(moves) =>
+		{
+			for m in moves
+			{
+				board.with_highlight(
+					m,
+					&mut |board| println!("{}", board));
+				board.force_remove(m);
+				println!(
+					"Press \u{1b}[38;5;15m[Enter]\u{1b}[0m for next hint.");
+				stdin().read_line(&mut String::new())?;
+			}
+		}
+		None => println!("\u{1b}[38;5;11mNo solution exists.\u{1b}[0m")
+	}
     Ok(())
 }
 
 #[derive(Debug)]
 enum AppError
 {
+	UsageError,
     IOError (Error),
     ParseError (ParseError)
 }

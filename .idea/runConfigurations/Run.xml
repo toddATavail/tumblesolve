@@ -1,7 +1,7 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="false" name="Run" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
     <option name="channel" value="DEFAULT" />
-    <option name="command" value="run --package tumblesolve --bin tumblesolve" />
+    <option name="command" value="run --package tumblesolve --bin tumblesolve examples/board005.tsb" />
     <option name="allFeatures" value="false" />
     <option name="nocapture" value="false" />
     <option name="backtrace" value="SHORT" />

@@ -1,0 +1,7 @@
+solvable = yes
+wild = r
+r = 9
+
+---
+
+r r * _ _

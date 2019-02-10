@@ -45,7 +45,7 @@ use tokesies::*;
  ******************************************************************************/
 
 /// The behavior profile of an arbitrary stone.
-trait Stone
+pub trait Stone
 {
 	/// Answer the state of the receiver given the specified board state.
 	fn for_board (&self, board: &Board) -> Self;
@@ -54,7 +54,7 @@ trait Stone
 /// The absence of stoniness. Always represented by `'_'` in input, as `' '` in
 /// output.
 #[derive(Copy, Clone, Hash, Debug)]
-struct NoStone;
+pub struct NoStone;
 
 impl Stone for NoStone
 {
@@ -75,7 +75,7 @@ impl Display for NoStone
 
 /// An ordinary stone.
 #[derive(Copy, Clone, Hash, Debug)]
-struct OrdinaryStone
+pub struct OrdinaryStone
 {
 	/// The character that represents this ordinary stone.
 	rep: char,
@@ -86,6 +86,15 @@ struct OrdinaryStone
 	///
 	/// [wild stones]: WildStone
 	color: u32
+}
+
+impl OrdinaryStone
+{
+	/// Answer the color of the receiver.
+	pub fn color (&self) -> u32
+	{
+		self.color
+	}
 }
 
 impl Stone for OrdinaryStone
@@ -112,7 +121,7 @@ impl Display for OrdinaryStone
 ///
 /// [board]: Board
 #[derive(Copy, Clone, Hash, Debug)]
-struct WildStone;
+pub struct WildStone;
 
 impl Stone for WildStone
 {
@@ -127,7 +136,7 @@ impl Display for WildStone
 {
 	fn fmt (&self, f: &mut Formatter) -> Result
 	{
-		write!(f, "*")
+		write!(f, "\u{1b}[38;5;5m*")
 	}
 }
 
@@ -135,7 +144,7 @@ impl Display for WildStone
 /// permits access to stones above it. Initially open is represented by `'/'`,
 /// initially closed is represented by `'+'`.
 #[derive(Copy, Clone, Hash, Debug)]
-struct ToggleStone
+pub struct ToggleStone
 {
 	/// The phase of the toggle stone, either `0` or `1`. The [turn number] is
 	/// added to the phase to determine whether the toggle stone is currently an
@@ -150,7 +159,7 @@ struct ToggleStone
 impl ToggleStone
 {
 	/// Answer `true` if the receiver is open, `false` otherwise.
-	fn is_open (&self) -> bool
+	pub fn is_open (&self) -> bool
 	{
 		self.phase & 1 == 0
 	}
@@ -173,13 +182,16 @@ impl Display for ToggleStone
 	/// [`for_board`]: Stone::for_board
 	fn fmt (&self, f: &mut Formatter) -> Result
 	{
-		write!(f, "{}", if self.is_open() { "/" } else { "+" })
+		write!(
+			f,
+			"{}",
+			if self.is_open() { "\u{1b}[38;5;15m/" } else { "\u{1b}[38;5;8m+" })
 	}
 }
 
 /// An arbitrary stone.
 #[derive(Copy, Clone, Hash, Debug)]
-enum AnyStone
+pub enum AnyStone
 {
 	None (NoStone),
 	Ordinary (OrdinaryStone),
@@ -224,6 +236,12 @@ impl Display for AnyStone
 /// The default board width.
 const DEFAULT_WIDTH: u32 = 5;
 
+/// An `(x,y`) point for locating a [stone] on a [board].
+///
+/// [stone]: AnyStrong
+/// [board]: Board
+pub type Point = (u32, u32);
+
 /// The state of the game board during a particular turn.
 #[derive(Debug)]
 pub struct Board
@@ -242,17 +260,25 @@ pub struct Board
 	/// [wild stones]: WildStone
 	wild_colors: u32,
 
+	/// The point to display highlighted, if any.
+	highlight: Option<Point>,
+
 	/// The row stride of the physical board, i.e., the number of [stones] in
 	/// any given row.
 	///
-	/// [stones]: Stone
+	/// [stones]: AnyStone
 	width: u32,
 
 	/// The column stride of the physical board, i.e., the number of [stones] in
 	/// any given column.
 	///
-	/// [stones]: Stone
+	/// [stones]: AnyStone
 	height: u32,
+
+	/// The count of removable [stones].
+	///
+	/// [stones]: AnyStone
+	removable_stones: u32,
 
 	/// The physical board, as a single linear vector.
 	grid: Vec<AnyStone>,
@@ -316,12 +342,37 @@ impl Board
 		{
 			return Err(IncompleteBoard)
 		}
+		let removable_stones = grid.iter().filter(|s|
+		{
+			use self::AnyStone::*;
+			match s
+			{
+				Ordinary(_) => true,
+				Wild(_) => true,
+				_ => false
+			}
+		}).count() as u32;
+		let wild_stones = grid.iter().filter(|s|
+		{
+			use self::AnyStone::*;
+			match s
+			{
+				Wild(_) => true,
+				_ => false
+			}
+		}).count() as u32;
+		if wild_colors.count_ones() != wild_stones
+		{
+			return Err(WrongWildCount)
+		}
 		Ok(Board
 		{
 			turn: 0,
 			wild_colors,
+			highlight: None,
 			width,
 			height,
+			removable_stones,
 			grid,
 			properties: legend
 		})
@@ -401,7 +452,7 @@ impl Board
 						Display(c) =>
 						{
 							let s = format!(
-								"\u{001b}[38;5;{}m{}\u{001b}[0m",
+								"\u{1b}[38;5;{}m{}",
 								term,
 								c);
 							map.insert(unwrapped, String(s))
@@ -454,64 +505,152 @@ impl Board
 		Ok(vec)
 	}
 
+	/// Answer the current turn.
+	pub fn turn (&self) -> u32
+	{
+		self.turn
+	}
+
+	/// Answer the width of the board, in stones.
+	pub fn width (&self) -> u32
+	{
+		self.width
+	}
+
+	/// Answer the height of the board, in rows.
+	pub fn height (&self) -> u32
+	{
+		self.height
+	}
+
+	/// Answer the bitwise OR of all active [colors] for [wild stones]. Every
+	/// wild stone has the same color space.
+	///
+	/// [colors]: OrdinaryStone::color
+	/// [wild stones]: WildStone
+	pub fn wild_colors (&self) -> u32
+	{
+		self.wild_colors
+	}
+
+	/// Answer the count of removable [stones].
+	///
+	/// [stones]: AnyStone
+	pub fn removable_stones (&self) -> u32
+	{
+		self.removable_stones
+	}
+
+	/// Remove the [stone] at the specified location, capturing it, and
+	/// asserting that it has the specified color. The color information is
+	/// needed for proper treatment of [wild stones]. Answer a closure that can
+	/// reverse the effect of this removal.
+	///
+	/// [stone]: AnyStone
+	/// [wild stones]: WildStone
+	#[must_use]
+	pub fn remove (
+		&mut self,
+		p: Point,
+		s: &mut AnyStone,
+		color: u32) -> Box<for<'r> FnMut(&'r mut Board)>
+	{
+		use self::AnyStone::*;
+		let index = (p.1 * self.width + p.0) as usize;
+		let stone = self.grid[index].for_board(self);
+		*s = stone;
+		match stone
+		{
+			Ordinary(o) =>
+			{
+				assert!(color == 0 || color == o.color);
+				self.grid[index] = None(NoStone);
+				self.turn += 1;
+				self.removable_stones -= 1;
+				Box::new(move |board: &mut Board|
+				{
+					board.grid[index] = stone;
+					board.removable_stones += 1;
+					board.turn -= 1;
+				})
+			},
+			Wild(_) if color == 0 =>
+			{
+				self.grid[index] = None(NoStone);
+				self.turn += 1;
+				self.removable_stones -= 1;
+				Box::new(move |board: &mut Board|
+				{
+					board.turn -= 1;
+					board.removable_stones += 1;
+					board.grid[index] = stone;
+				})
+			},
+			Wild(_) =>
+			{
+				assert_ne!(self.wild_colors & color, 0);
+				self.grid[index] = None(NoStone);
+				self.turn += 1;
+				self.removable_stones -= 1;
+				self.wild_colors &= !color;
+				Box::new(move |board: &mut Board|
+				{
+					board.wild_colors |= color;
+					board.removable_stones += 1;
+					board.turn -= 1;
+					board.grid[index] = stone;
+				})
+			},
+			_ => unreachable!()
+		}
+	}
+
+	/// Forcibly remove the [stone] at the specified location without doing any
+	/// accounting other than incrementing the turn. This is a destructive
+	/// operation, and should not be used for computing a board solution.
+	///
+	/// [stone]: AnyStone
+	pub fn force_remove (&mut self, p: Point)
+	{
+		let index = (p.1 * self.width + p.0) as usize;
+		self.grid[index] = AnyStone::None(NoStone);
+		self.turn += 1;
+	}
+
 	/// Apply the specified closure to the [stone] at `(x,y)`, where the origin
 	/// `(0,0)` is the uppermost leftmost grid cell.
 	///
 	/// [stone]: AnyStone
-	fn stone_do (
+	pub fn stone_do (
 		&self,
-		p: (u32, u32),
+		p: Point,
 		action: &mut dyn for<'r, 's> FnMut(&'r Board, &'s AnyStone))
 	{
 		let index = (p.1 * self.width + p.0) as usize;
-		let stone = self.grid[index];
+		let stone = self.grid[index].for_board(self);
 		action(self, &stone)
 	}
 
-	/// Apply the specified closure to the [stone] at `(x,y)`, where the origin
-	/// `(0,0)` is the uppermost leftmost grid cell.
-	fn mut_stone_do (
-		&mut self,
-		p: (u32, u32),
-		action: &mut dyn for<'r, 's> FnMut(&'r mut Board, &'s AnyStone))
-	{
-		let index = (p.1 * self.width + p.0) as usize;
-		let stone = self.grid[index];
-		action(self, &stone)
-	}
-
-	/// Apply the specified closure to every [stone].
+	/// Apply the specified closure while the specified [stone] is highlighted.
 	///
 	/// [stone]: AnyStone
-	fn board_do (
-		&self,
-		action: &mut dyn for<'r, 's> FnMut(&'r Board, &'s AnyStone))
-	{
-		for row in 0..self.height
-		{
-			for column in 0..self.width
-			{
-				self.stone_do((row, column), action)
-			}
-		}
-	}
-
-	/// Apply the specified closure to every [stone].
-	///
-	/// [stone]: AnyStone
-	fn mut_board_do (
+	pub fn with_highlight (
 		&mut self,
-		action: &mut dyn for<'r, 's> FnMut(&'r mut Board, &'s AnyStone))
+		p: Point,
+		action: &mut dyn for<'r> FnMut(&'r Board))
 	{
-		for row in 0..self.height
-		{
-			for column in 0..self.width
-			{
-				self.mut_stone_do((row, column), action)
-			}
-		}
+		self.highlight = Some(p);
+		action(self);
+		self.highlight = None;
 	}
 }
+
+const NW_CORNER: char = '\u{250F}';
+const NE_CORNER: char = '\u{2513}';
+const SE_CORNER: char = '\u{251B}';
+const SW_CORNER: char = '\u{2517}';
+const V_LINE: char = '\u{2503}';
+const H_LINE: char = '\u{2501}';
 
 impl Display for Board
 {
@@ -520,28 +659,52 @@ impl Display for Board
 		use self::AnyStone::*;
 		use self::PropertyKey::*;
 		use self::PropertyValue::*;
+		write!(f, "Turn #{}", self.turn + 1)?;
+		if let Some((column, row)) = self.highlight
+		{
+			write!(f, ": \u{1b}[38;5;15m({}, {})\u{1b}[0m", column, row)?;
+		}
+		// Write the top of the box.
+		write!(f, "\n{}", NW_CORNER)?;
+		for _ in 0..(self.width << 1) - 1 { write!(f, "{}", H_LINE)?; }
+		writeln!(f, "{}", NE_CORNER)?;
+		// Write the contexts of the box.
 		for row in 0..self.height
 		{
+			write!(f, "{}", V_LINE)?;
 			for column in 0..self.width
 			{
 				let index = (row * self.width + column) as usize;
-				let stone = self.grid[index];
+				let stone = self.grid[index].for_board(self);
+				let highlight =
+					if Some((column, row))==self.highlight {"\u{1b}[48;5;231m"}
+					else { "" };
+				let space = if column == self.width - 1 { "" } else { " " };
 				match stone
 				{
 					Ordinary(o) =>
 					{
 						match self.properties.get(&Display(o.rep))
 						{
-							Some(String(display)) =>
-								write!(f, "{} ", display)?,
-							_ => write!(f, "{} ", o)?
+							Some(String(display)) => write!(
+								f,
+								"{}{}\u{1b}[0m{}",
+								highlight,
+								display,
+								space)?,
+							_ => write!(
+								f, "{}{}\u{1b}[0m{}", highlight, o, space)?
 						}
 					},
-					_ => write!(f, "{} ", stone)?
+					_ => write!(f, "{}{}\u{1b}[0m{}", highlight, stone, space)?
 				};
 			}
-			writeln!(f)?;
+			writeln!(f, "{}", V_LINE)?;
 		}
+		// Write the bottom of the box.
+		write!(f, "{}", SW_CORNER)?;
+		for _ in 0..(self.width << 1) - 1 { write!(f, "{}", H_LINE)?; }
+		writeln!(f, "{}", SE_CORNER)?;
 		Ok(())
 	}
 }
@@ -550,9 +713,11 @@ impl Display for Board
  *                             Property support.                              *
  ******************************************************************************/
 
+pub type PropertyMap = HashMap<PropertyKey, PropertyValue>;
+
 /// A board property key.
 #[derive(PartialEq, Eq, Hash, Debug)]
-enum PropertyKey
+pub enum PropertyKey
 {
 	/// The width, in stones, i.e., the row stride.
 	Width,
@@ -569,7 +734,7 @@ enum PropertyKey
 
 /// A board property value.
 #[derive(PartialEq, Eq, Hash, Debug)]
-enum PropertyValue
+pub enum PropertyValue
 {
 	/// An arbitrary `u32`.
 	U32 (u32),
@@ -583,7 +748,6 @@ enum PropertyValue
  ******************************************************************************/
 
 type BoardResult = result::Result<Board, ParseError>;
-type PropertyMap = HashMap<PropertyKey, PropertyValue>;
 type ColorMap = HashMap<char, u32>;
 type LegendResult = result::Result<(), ParseError>;
 type GridResult = result::Result<Vec<AnyStone>, ParseError>;
@@ -605,7 +769,10 @@ pub enum ParseError
 	RepeatedWildColor,
 
 	/// Incomplete board, i.e., the last row is not fully populated.
-	IncompleteBoard
+	IncompleteBoard,
+
+	/// Wrong count of [wild stones](WildStone).
+	WrongWildCount
 }
 
 impl From<ParseIntError> for ParseError

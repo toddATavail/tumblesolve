@@ -1,0 +1,8 @@
+solvable = no
+wild = rg
+r = 9
+
+---
+
+r g r * r
+_ * _ _ _

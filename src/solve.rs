@@ -55,7 +55,7 @@ impl Board
 	pub fn solve (&mut self) -> Option<Vec<Point>>
 	{
 		let mut moves = Vec::<Point>::new();
-		match self.solve_recursively(&mut moves, WILD_COLOR, true)
+		match self.solve_recursively(&mut moves, WILD_COLOR, 0, true)
 		{
 			true if moves.len() % 3 == 0 => Some(moves),
 			_ => None
@@ -71,6 +71,7 @@ impl Board
 		&mut self,
 		moves: &mut Vec<Point>,
 		color: u32,
+		forbidden_color: u32,
 		allow_wild: bool) -> bool
 	{
 		// If the board has been solved, then return; let the callers deal with
@@ -81,7 +82,7 @@ impl Board
 		}
 		// Iterate through all available moves, using the current color and wild
 		// stone permissiveness.
-		let available = self.frontier(color, allow_wild);
+		let available = self.frontier(color, forbidden_color, allow_wild);
 		for p in available
 		{
 			moves.push(p);
@@ -90,23 +91,32 @@ impl Board
 			// Update the allowed next color and wild permissiveness based on 1)
 			// whether a triplet is already in progress and 2) the nature of the
 			// stone just removed.
-			let (new_color, new_allow_wild) =
+			let (new_color, new_forbidden_color, new_allow_wild) =
 				if self.turn() % 3 == 0
 				{
-					(WILD_COLOR, true)
+					(
+						WILD_COLOR,
+						if self.color_locked() { color } else { 0 },
+						true
+					)
 				}
 				else
 				{
 					match stone
 					{
-						AnyStone::Ordinary(o) => (o.color(), allow_wild),
-						AnyStone::Wild(_) => (color, false),
+						AnyStone::Ordinary(o) =>
+							(o.color(), forbidden_color, allow_wild),
+						AnyStone::Wild(_) => (color, forbidden_color, false),
 						_ => unreachable!()
 					}
 				};
 			// Recurse using the new move sequence, color filter, and wild
 			// permissiveness.
-			if self.solve_recursively(moves, new_color, new_allow_wild)
+			if self.solve_recursively(
+				moves,
+				new_color,
+				new_forbidden_color,
+				new_allow_wild)
 			{
 				undo(self);
 				return true;
@@ -124,7 +134,11 @@ impl Board
 	/// the specified color and wild filters.
 	///
 	/// [stones]: AnyStone
-	fn frontier (&self, color: u32, allow_wild: bool) -> Vec<Point>
+	fn frontier (
+		&self,
+		color: u32,
+		forbidden_color: u32,
+		allow_wild: bool) -> Vec<Point>
 	{
 		use crate::board::AnyStone::*;
 		let mut vec = Vec::<(u32, u32)>::new();
@@ -139,6 +153,10 @@ impl Board
 					match stone
 					{
 						None(_) => {},
+						Ordinary(_)
+							if forbidden_color != 0
+								&& color == forbidden_color =>
+							next_column = true,
 						Ordinary(_) if color == 0 =>
 						{
 							vec.push((column, row));

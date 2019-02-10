@@ -68,11 +68,17 @@ fn main () -> Result<(), AppError>
     Ok(())
 }
 
+/// An application error.
 #[derive(Debug)]
 enum AppError
 {
+	/// The user has invoked the application incorrectly.
 	UsageError,
+
+	/// An I/O error has occurred.
     IOError (Error),
+
+	/// A parse error has occurred.
     ParseError (ParseError)
 }
 

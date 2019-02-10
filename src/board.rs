@@ -38,6 +38,7 @@ use std::fmt::{Display, Formatter, Result};
 use std::collections::HashMap;
 use std::num::ParseIntError;
 use std::result;
+use std::str::ParseBoolError;
 use tokesies::*;
 
 /******************************************************************************
@@ -326,6 +327,10 @@ pub struct Board
 	/// [wild stones]: WildStone
 	wild_colors: u32,
 
+	/// `true` if the board is color locked, i.e., it is not permitted to play
+	/// two triplets of the same color sequentially, `false` otherwise.
+	color_locked: bool,
+
 	/// The point to display highlighted, if any.
 	highlight: Option<Point>,
 
@@ -398,6 +403,11 @@ impl Board
 			Some(PropertyValue::U32(mask)) => *mask,
 			_ => 0
 		};
+		let color_locked = match legend.get(&PropertyKey::ColorLock)
+		{
+			Some(PropertyValue::Bool(b)) => *b,
+			_ => false
+		};
 		let width = match legend.get(&PropertyKey::Width)
 		{
 			Some(PropertyValue::U32(width)) => *width,
@@ -427,6 +437,7 @@ impl Board
 		{
 			turn: 0,
 			wild_colors,
+			color_locked,
 			highlight: None,
 			width,
 			height,
@@ -471,6 +482,7 @@ impl Board
 					{
 						"width" => Width,
 						"wild" => Wild,
+						"colorlock" => ColorLock,
 						unknown =>
 						{
 							if unknown.len() == 1
@@ -507,6 +519,8 @@ impl Board
 							}
 							map.insert(unwrapped, U32(*next_color - 1))
 						},
+						ColorLock => map.insert(
+							unwrapped, Bool(term.parse::<bool>()?)),
 						Display(c) =>
 						{
 							let s = format!(
@@ -590,6 +604,12 @@ impl Board
 	pub fn wild_colors (&self) -> u32
 	{
 		self.wild_colors
+	}
+
+	/// Answer `true` if the receiver is color locked, or `false` otherwise.
+	pub fn color_locked (&self) -> bool
+	{
+		self.color_locked
 	}
 
 	/// Answer the count of removable [stones].
@@ -844,6 +864,10 @@ pub enum PropertyKey
 	/// The specification of colors for [wild stones](WildStone).
 	Wild,
 
+	/// A color is locked once completed, and cannot be played until another
+	/// color has been played.
+	ColorLock,
+
 	/// The specification of display properties for a stone.
 	Display (char),
 
@@ -855,6 +879,9 @@ pub enum PropertyKey
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub enum PropertyValue
 {
+	/// An arbitrary `bool`.
+	Bool (bool),
+
 	/// An arbitrary `u32`.
 	U32 (u32),
 
@@ -897,6 +924,14 @@ pub enum ParseError
 impl From<ParseIntError> for ParseError
 {
 	fn from (_error: ParseIntError) -> Self
+	{
+		ParseError::InvalidPropertyValue
+	}
+}
+
+impl From<ParseBoolError> for ParseError
+{
+	fn from (_error: ParseBoolError) -> Self
 	{
 		ParseError::InvalidPropertyValue
 	}

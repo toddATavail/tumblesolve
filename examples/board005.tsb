@@ -1,5 +1,6 @@
 solvable = yes
 wild = rgb
+colorlock = true
 r = 9
 g = 28
 b = 27

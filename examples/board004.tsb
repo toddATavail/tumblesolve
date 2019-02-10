@@ -1,0 +1,13 @@
+solvable = yes
+r = 9
+g = 28
+b = 27
+y = 11
+
+---
+
+g g y _ _
+b g y _ _
+b r y _ _
+b r # _ _
+# r _ _ _

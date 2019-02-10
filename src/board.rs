@@ -49,6 +49,9 @@ pub trait Stone
 {
 	/// Answer the state of the receiver given the specified board state.
 	fn for_board (&self, board: &Board) -> Self;
+
+	/// Answer `true` if the receiver is, by nature, directly removable.
+	fn is_removable (&self) -> bool;
 }
 
 /// The absence of stoniness. Always represented by `'_'` in input, as `' '` in
@@ -62,6 +65,11 @@ impl Stone for NoStone
 	fn for_board (&self, _board: &Board) -> Self
 	{
 		*self
+	}
+
+	fn is_removable (&self) -> bool
+	{
+		false
 	}
 }
 
@@ -104,6 +112,11 @@ impl Stone for OrdinaryStone
 	{
 		*self
 	}
+
+	fn is_removable (&self) -> bool
+	{
+		true
+	}
 }
 
 impl Display for OrdinaryStone
@@ -111,6 +124,33 @@ impl Display for OrdinaryStone
 	fn fmt (&self, f: &mut Formatter) -> Result
 	{
 		write!(f, "{}", self.rep)
+	}
+}
+
+/// A survivor stone cannot be removed directly, but automatically disappears
+/// when the last stone in its row has been removed.
+#[derive(Copy, Clone, Hash, Debug)]
+pub struct SurvivorStone;
+
+impl Stone for SurvivorStone
+{
+	/// Answer a copy of the receiver.
+	fn for_board (&self, _board: &Board) -> Self
+	{
+		*self
+	}
+
+	fn is_removable (&self) -> bool
+	{
+		false
+	}
+}
+
+impl Display for SurvivorStone
+{
+	fn fmt (&self, f: &mut Formatter) -> Result
+	{
+		write!(f, "\u{1b}[38;5;8m#")
 	}
 }
 
@@ -129,6 +169,11 @@ impl Stone for WildStone
 	fn for_board (&self, _board: &Board) -> Self
 	{
 		*self
+	}
+
+	fn is_removable (&self) -> bool
+	{
+		true
 	}
 }
 
@@ -172,6 +217,11 @@ impl Stone for ToggleStone
 	{
 		ToggleStone { phase: self.phase + board.turn }
 	}
+
+	fn is_removable (&self) -> bool
+	{
+		false
+	}
 }
 
 impl Display for ToggleStone
@@ -195,6 +245,7 @@ pub enum AnyStone
 {
 	None (NoStone),
 	Ordinary (OrdinaryStone),
+	Survivor (SurvivorStone),
 	Wild (WildStone),
 	Toggle (ToggleStone)
 }
@@ -208,8 +259,22 @@ impl Stone for AnyStone
 		{
 			None(s) => None(s.for_board(board)),
 			Ordinary(s) => Ordinary(s.for_board(board)),
+			Survivor(s) => Survivor(s.for_board(board)),
 			Wild(s) => Wild(s.for_board(board)),
 			Toggle(s) => Toggle(s.for_board(board))
+		}
+	}
+
+	fn is_removable (&self) -> bool
+	{
+		use self::AnyStone::*;
+		match self
+		{
+			None(s) => s.is_removable(),
+			Ordinary(s) => s.is_removable(),
+			Survivor(s) => s.is_removable(),
+			Wild(s) => s.is_removable(),
+			Toggle(s) => s.is_removable()
 		}
 	}
 }
@@ -223,6 +288,7 @@ impl Display for AnyStone
 		{
 			None(s) => s.fmt(f),
 			Ordinary(s) => s.fmt(f),
+			Survivor(s) => s.fmt(f),
 			Wild(s) => s.fmt(f),
 			Toggle(s) => s.fmt(f)
 		}
@@ -342,16 +408,8 @@ impl Board
 		{
 			return Err(IncompleteBoard)
 		}
-		let removable_stones = grid.iter().filter(|s|
-		{
-			use self::AnyStone::*;
-			match s
-			{
-				Ordinary(_) => true,
-				Wild(_) => true,
-				_ => false
-			}
-		}).count() as u32;
+		let removable_stones =
+			grid.iter().filter(|s| s.is_removable()).count() as u32;
 		let wild_stones = grid.iter().filter(|s|
 		{
 			use self::AnyStone::*;
@@ -487,6 +545,7 @@ impl Board
 			vec.push(match token.term.as_ref()
 			{
 				"_" => None(NoStone),
+				"#" => Survivor(SurvivorStone),
 				"*" => Wild(WildStone),
 				"/" => Toggle(ToggleStone {phase: 0}),
 				"+" => Toggle(ToggleStone {phase: 1}),
@@ -567,11 +626,13 @@ impl Board
 				self.grid[index] = None(NoStone);
 				self.turn += 1;
 				self.removable_stones -= 1;
+				let survivors = self.remove_survivors(p);
 				Box::new(move |board: &mut Board|
 				{
-					board.grid[index] = stone;
+					board.add_survivors(&survivors);
 					board.removable_stones += 1;
 					board.turn -= 1;
+					board.grid[index] = stone;
 				})
 			},
 			Wild(_) if color == 0 =>
@@ -579,10 +640,12 @@ impl Board
 				self.grid[index] = None(NoStone);
 				self.turn += 1;
 				self.removable_stones -= 1;
+				let survivors = self.remove_survivors(p);
 				Box::new(move |board: &mut Board|
 				{
-					board.turn -= 1;
+					board.add_survivors(&survivors);
 					board.removable_stones += 1;
+					board.turn -= 1;
 					board.grid[index] = stone;
 				})
 			},
@@ -593,8 +656,10 @@ impl Board
 				self.turn += 1;
 				self.removable_stones -= 1;
 				self.wild_colors &= !color;
+				let survivors = self.remove_survivors(p);
 				Box::new(move |board: &mut Board|
 				{
+					board.add_survivors(&survivors);
 					board.wild_colors |= color;
 					board.removable_stones += 1;
 					board.turn -= 1;
@@ -602,6 +667,59 @@ impl Board
 				})
 			},
 			_ => unreachable!()
+		}
+	}
+
+	/// Remove all [survivors] from the row of the specified point, but only if
+	/// there are no removable stones in the row with them. Answer the removed
+	/// survivors.
+	///
+	/// [survivors]: SurvivorStone
+	#[must_use]
+	fn remove_survivors (&mut self, p: Point) -> Vec<Point>
+	{
+		use self::AnyStone::*;
+		let removable = (0..self.width)
+			.map(|column|
+			{
+				let index = (p.1 * self.width + column) as usize;
+				self.grid[index]
+			})
+			.filter(|s| s.is_removable())
+			.count();
+		if removable == 0
+		{
+			let mut survivors = Vec::<Point>::new();
+			for column in 0..self.width
+			{
+				let index = (p.1 * self.width + column) as usize;
+				match self.grid[index]
+				{
+					Survivor(_) =>
+					{
+						survivors.push((column, p.1));
+						self.grid[index] = AnyStone::None(NoStone);
+					},
+					_ => {}
+				}
+			}
+			survivors
+		}
+		else
+		{
+			vec![]
+		}
+	}
+
+	/// Add [survivors] to the specified locations.
+	///
+	/// [survivors]: SurvivorStone
+	fn add_survivors (&mut self, survivors: &Vec<Point>)
+	{
+		for p in survivors
+		{
+			let index = (p.1 * self.width + p.0) as usize;
+			self.grid[index] = AnyStone::Survivor(SurvivorStone);
 		}
 	}
 
@@ -615,6 +733,7 @@ impl Board
 		let index = (p.1 * self.width + p.0) as usize;
 		self.grid[index] = AnyStone::None(NoStone);
 		self.turn += 1;
+		let _ = self.remove_survivors(p);
 	}
 
 	/// Apply the specified closure to the [stone] at `(x,y)`, where the origin
@@ -696,7 +815,7 @@ impl Display for Board
 								f, "{}{}\u{1b}[0m{}", highlight, o, space)?
 						}
 					},
-					_ => write!(f, "{}{}\u{1b}[0m{}", highlight, stone, space)?
+					s => write!(f, "{}{}\u{1b}[0m{}", highlight, s, space)?
 				};
 			}
 			writeln!(f, "{}", V_LINE)?;

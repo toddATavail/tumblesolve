@@ -10,7 +10,7 @@ y = 11
 r r * r r
 r g g * g
 g g b b b
-b _ b _ *
+b _ b # *
 y _ _ _ _
 y _ _ _ _
 y / + / _

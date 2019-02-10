@@ -151,6 +151,7 @@ impl Board
 							next_column = true;
 						},
 						Ordinary(_) => next_column = true,
+						Survivor(_) => next_column = true,
 						Wild(_) if !allow_wild => next_column = true,
 						Wild(_) if color == 0 =>
 						{

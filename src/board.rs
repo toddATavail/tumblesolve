@@ -1,6 +1,6 @@
 //
 // board.rs
-// Copyright 2019, Todd L Smith.
+// Copyright © 2019-2023, Todd L Smith.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
@@ -55,8 +55,8 @@ pub trait Stone
 	fn is_removable (&self) -> bool;
 }
 
-/// The absence of stoniness. Always represented by `'_'` in input, as `' '` in
-/// output.
+/// The absence of stoniness, i.e., the nothing that does not live inside an
+/// empty cell. Always represented by `'_'` in input, as `' '` in output.
 #[derive(Copy, Clone, Hash, Debug)]
 pub struct NoStone;
 
@@ -251,10 +251,17 @@ pub enum AnyStone
 	Toggle (ToggleStone)
 }
 
+//
+// Some procedure macros would be nice to eliminate the boilerplate in the
+// methods below, but it seems like over-engineering for such a small project.
+//
+
 impl Stone for AnyStone
 {
 	fn for_board (&self, board: &Board) -> Self
 	{
+		// The local aliasing feels cleaner than cluttering the match expression
+		// with lots of namespace qualifications.
 		use self::AnyStone::*;
 		match self
 		{
@@ -268,14 +275,13 @@ impl Stone for AnyStone
 
 	fn is_removable (&self) -> bool
 	{
-		use self::AnyStone::*;
 		match self
 		{
-			None(s) => s.is_removable(),
-			Ordinary(s) => s.is_removable(),
-			Survivor(s) => s.is_removable(),
-			Wild(s) => s.is_removable(),
-			Toggle(s) => s.is_removable()
+			AnyStone::None(s) => s.is_removable(),
+			AnyStone::Ordinary(s) => s.is_removable(),
+			AnyStone::Survivor(s) => s.is_removable(),
+			AnyStone::Wild(s) => s.is_removable(),
+			AnyStone::Toggle(s) => s.is_removable()
 		}
 	}
 }
@@ -284,14 +290,13 @@ impl Display for AnyStone
 {
 	fn fmt (&self, f: &mut Formatter) -> Result
 	{
-		use self::AnyStone::*;
 		match self
 		{
-			None(s) => s.fmt(f),
-			Ordinary(s) => s.fmt(f),
-			Survivor(s) => s.fmt(f),
-			Wild(s) => s.fmt(f),
-			Toggle(s) => s.fmt(f)
+			AnyStone::None(s) => s.fmt(f),
+			AnyStone::Ordinary(s) => s.fmt(f),
+			AnyStone::Survivor(s) => s.fmt(f),
+			AnyStone::Wild(s) => s.fmt(f),
+			AnyStone::Toggle(s) => s.fmt(f)
 		}
 	}
 }
@@ -305,7 +310,7 @@ const DEFAULT_WIDTH: u32 = 5;
 
 /// An `(x,y`) point for locating a [stone] on a [board].
 ///
-/// [stone]: AnyStrong
+/// [stone]: AnyStone
 /// [board]: Board
 pub type Point = (u32, u32);
 
@@ -375,7 +380,6 @@ impl Board
 	/// overridden by the `rowspacing` property.
 	pub fn parse (tsb: &str) -> BoardResult
 	{
-		use self::ParseError::*;
 		let mut colors = ColorMap::new();
 		let mut next_color = 1;
 		let mut legend = PropertyMap::new();
@@ -416,22 +420,21 @@ impl Board
 		let height = (grid.len() as u32 + (width - 1)) / width;
 		if width * height != grid.len() as u32
 		{
-			return Err(IncompleteBoard)
+			return Err(ParseError::IncompleteBoard)
 		}
 		let removable_stones =
 			grid.iter().filter(|s| s.is_removable()).count() as u32;
 		let wild_stones = grid.iter().filter(|s|
 		{
-			use self::AnyStone::*;
 			match s
 			{
-				Wild(_) => true,
+				AnyStone::Wild(_) => true,
 				_ => false
 			}
 		}).count() as u32;
 		if wild_colors.count_ones() != wild_stones
 		{
-			return Err(WrongWildCount)
+			return Err(ParseError::WrongWildCount)
 		}
 		Ok(Board
 		{
@@ -460,10 +463,8 @@ impl Board
 		colors: &mut ColorMap,
 		next_color: &mut u32) -> LegendResult
 	{
+		// The local aliases make the match discriminants easier to understand.
 		use self::LegendParseState::*;
-		use self::PropertyKey::*;
-		use self::PropertyValue::*;
-		use self::ParseError::*;
 		let mut key = None::<PropertyKey>;
 		let mut state = ExpectKeyOrLinefeedOrEnd;
 		let tokens = FilteredTokenizer::new(
@@ -473,74 +474,84 @@ impl Board
 			match (state, token.term.as_ref())
 			{
 				(ExpectKeyOrLinefeedOrEnd, "=") =>
-					return Err(InvalidPropertySyntax),
+					return Err(ParseError::InvalidPropertySyntax),
 				(ExpectKeyOrLinefeedOrEnd, "\n") =>
 					state = ExpectKeyOrLinefeedOrEnd,
 				(ExpectKeyOrLinefeedOrEnd, term) =>
 				{
 					key = Some(match term
 					{
-						"width" => Width,
-						"wild" => Wild,
-						"colorlock" => ColorLock,
+						"width" => PropertyKey::Width,
+						"wild" => PropertyKey::Wild,
+						"colorlock" => PropertyKey::ColorLock,
 						unknown =>
 						{
 							if unknown.len() == 1
 							{
-								Display(unknown.chars().next().unwrap())
+								PropertyKey::Display(
+									unknown.chars().next().unwrap())
 							}
 							else
 							{
-								Unknown(unknown.to_string())
+								PropertyKey::Unknown(unknown.to_string())
 							}
 						}
 					});
 					state = ExpectEquals;
 				},
 				(ExpectEquals, "=") => state = ExpectValue,
-				(ExpectEquals, _) => return Err(InvalidPropertySyntax),
+				(ExpectEquals, _) => return Err(
+					ParseError::InvalidPropertySyntax),
 				(ExpectValue, term) =>
 				{
 					let unwrapped = key.unwrap();
 					match unwrapped
 					{
-						Width => map.insert(
-							unwrapped, U32(term.parse::<u32>()?)),
-						Wild =>
+						PropertyKey::Width => map.insert(
+							unwrapped,
+							PropertyValue::U32(term.parse::<u32>()?)),
+						PropertyKey::Wild =>
 						{
 							for c in term.chars()
 							{
 								if colors.get(&c) != None
 								{
-									return Err(RepeatedWildColor);
+									return Err(ParseError::RepeatedWildColor);
 								}
 								colors.insert(c, *next_color);
 								*next_color = *next_color << 1;
 							}
-							map.insert(unwrapped, U32(*next_color - 1))
+							map.insert(
+								unwrapped,
+								PropertyValue::U32(*next_color - 1))
 						},
-						ColorLock => map.insert(
-							unwrapped, Bool(term.parse::<bool>()?)),
-						Display(c) =>
+						PropertyKey::ColorLock => map.insert(
+							unwrapped,
+							PropertyValue::Bool(term.parse::<bool>()?)),
+						PropertyKey::Display(c) =>
 						{
 							let s = format!(
 								"\u{1b}[38;5;{}m{}",
 								term,
 								c);
-							map.insert(unwrapped, String(s))
+							map.insert(
+								unwrapped,
+								PropertyValue::String(s))
 						},
-						Unknown(_) => map.insert(
-							unwrapped, String(term.to_string()))
+						PropertyKey::Unknown(_) => map.insert(
+							unwrapped,
+							PropertyValue::String(term.to_string()))
 					};
 					key = None;
 					state = ExpectLinefeed;
 				},
 				(ExpectLinefeed, "\n") => state = ExpectKeyOrLinefeedOrEnd,
-				(ExpectLinefeed, _) => return Err(InvalidPropertySyntax)
+				(ExpectLinefeed, _) => return Err(
+					ParseError::InvalidPropertySyntax)
 			}
 		}
 		if state == ExpectKeyOrLinefeedOrEnd { Ok(()) }
-		else { Err(InvalidPropertySyntax) }
+		else { Err(ParseError::InvalidPropertySyntax) }
 	}
 
 	/// Parse a grid from the specified string.
@@ -550,7 +561,6 @@ impl Board
 		colors: &mut ColorMap,
 		next_color: &mut u32) -> GridResult
 	{
-		use self::AnyStone::*;
 		let mut vec = Vec::<AnyStone>::new();
 		let tokens = FilteredTokenizer::new(
 			StoneFilter, grid).collect::<Vec<Token>>();
@@ -558,11 +568,11 @@ impl Board
 		{
 			vec.push(match token.term.as_ref()
 			{
-				"_" => None(NoStone),
-				"#" => Survivor(SurvivorStone),
-				"*" => Wild(WildStone),
-				"/" => Toggle(ToggleStone {phase: 0}),
-				"+" => Toggle(ToggleStone {phase: 1}),
+				"_" => AnyStone::None(NoStone),
+				"#" => AnyStone::Survivor(SurvivorStone),
+				"*" => AnyStone::Wild(WildStone),
+				"/" => AnyStone::Toggle(ToggleStone {phase: 0}),
+				"+" => AnyStone::Toggle(ToggleStone {phase: 1}),
 				s @ _ =>
 				{
 					let c = s.chars().next().unwrap();
@@ -571,7 +581,7 @@ impl Board
 						*next_color = *next_color << 1;
 						color
 					});
-					Ordinary(OrdinaryStone {rep: c, color})
+					AnyStone::Ordinary(OrdinaryStone {rep: c, color})
 				}
 			});
 		}
@@ -632,18 +642,17 @@ impl Board
 		&mut self,
 		p: Point,
 		s: &mut AnyStone,
-		color: u32) -> Box<for<'r> FnMut(&'r mut Board)>
+		color: u32) -> Box<dyn for<'r> FnMut(&'r mut Board)>
 	{
-		use self::AnyStone::*;
 		let index = (p.1 * self.width + p.0) as usize;
 		let stone = self.grid[index].for_board(self);
 		*s = stone;
 		match stone
 		{
-			Ordinary(o) =>
+			AnyStone::Ordinary(o) =>
 			{
 				assert!(color == 0 || color == o.color);
-				self.grid[index] = None(NoStone);
+				self.grid[index] = AnyStone::None(NoStone);
 				self.turn += 1;
 				self.removable_stones -= 1;
 				let survivors = self.remove_survivors(p);
@@ -655,9 +664,9 @@ impl Board
 					board.grid[index] = stone;
 				})
 			},
-			Wild(_) if color == 0 =>
+			AnyStone::Wild(_) if color == 0 =>
 			{
-				self.grid[index] = None(NoStone);
+				self.grid[index] = AnyStone::None(NoStone);
 				self.turn += 1;
 				self.removable_stones -= 1;
 				let survivors = self.remove_survivors(p);
@@ -669,10 +678,10 @@ impl Board
 					board.grid[index] = stone;
 				})
 			},
-			Wild(_) =>
+			AnyStone::Wild(_) =>
 			{
 				assert_ne!(self.wild_colors & color, 0);
-				self.grid[index] = None(NoStone);
+				self.grid[index] = AnyStone::None(NoStone);
 				self.turn += 1;
 				self.removable_stones -= 1;
 				self.wild_colors &= !color;
@@ -698,7 +707,6 @@ impl Board
 	#[must_use]
 	fn remove_survivors (&mut self, p: Point) -> Vec<Point>
 	{
-		use self::AnyStone::*;
 		let removable = (0..self.width)
 			.map(|column|
 			{
@@ -715,7 +723,7 @@ impl Board
 				let index = (p.1 * self.width + column) as usize;
 				match self.grid[index]
 				{
-					Survivor(_) =>
+					AnyStone::Survivor(_) =>
 					{
 						survivors.push((column, p.1));
 						self.grid[index] = AnyStone::None(NoStone);
@@ -793,11 +801,11 @@ const H_LINE: char = '\u{2501}';
 
 impl Display for Board
 {
+	/// We use ANSI colors and Unicode box characters to draw pretty
+	/// representations of the board, so VT 100 or similar is required for best
+	/// effect.
 	fn fmt (&self, f: &mut Formatter) -> Result
 	{
-		use self::AnyStone::*;
-		use self::PropertyKey::*;
-		use self::PropertyValue::*;
 		write!(f, "Turn #{}", self.turn + 1)?;
 		if let Some((column, row)) = self.highlight
 		{
@@ -821,11 +829,11 @@ impl Display for Board
 				let space = if column == self.width - 1 { "" } else { " " };
 				match stone
 				{
-					Ordinary(o) =>
+					AnyStone::Ordinary(o) =>
 					{
-						match self.properties.get(&Display(o.rep))
+						match self.properties.get(&PropertyKey::Display(o.rep))
 						{
-							Some(String(display)) => write!(
+							Some(PropertyValue::String(display)) => write!(
 								f,
 								"{}{}\u{1b}[0m{}",
 								highlight,

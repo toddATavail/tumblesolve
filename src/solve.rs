@@ -1,6 +1,6 @@
 //
 // solve.rs
-// Copyright 2019, Todd L Smith.
+// Copyright © 2019-2023, Todd L Smith.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
@@ -140,7 +140,6 @@ impl Board
 		forbidden_color: u32,
 		allow_wild: bool) -> Vec<Point>
 	{
-		use crate::board::AnyStone::*;
 		let mut vec = Vec::<(u32, u32)>::new();
 		let mut next_column ;
 		for column in 0..self.width()
@@ -152,37 +151,37 @@ impl Board
 				{
 					match stone
 					{
-						None(_) => {},
-						Ordinary(_)
+						AnyStone::None(_) => {},
+						AnyStone::Ordinary(_)
 							if forbidden_color != 0
 								&& color == forbidden_color =>
 							next_column = true,
-						Ordinary(_) if color == 0 =>
+						AnyStone::Ordinary(_) if color == 0 =>
 						{
 							vec.push((column, row));
 							next_column = true;
 						}
-						Ordinary(o @ OrdinaryStone {..})
+						AnyStone::Ordinary(o @ OrdinaryStone {..})
 							if o.color() == color =>
 						{
 							vec.push((column, row));
 							next_column = true;
 						},
-						Ordinary(_) => next_column = true,
-						Survivor(_) => next_column = true,
-						Wild(_) if !allow_wild => next_column = true,
-						Wild(_) if color == 0 =>
+						AnyStone::Ordinary(_) => next_column = true,
+						AnyStone::Survivor(_) => next_column = true,
+						AnyStone::Wild(_) if !allow_wild => next_column = true,
+						AnyStone::Wild(_) if color == 0 =>
 						{
 							vec.push((column, row));
 							next_column = true;
 						},
-						Wild(_) if color & self.wild_colors() != 0 =>
+						AnyStone::Wild(_) if color & self.wild_colors() != 0 =>
 						{
 							vec.push((column, row));
 							next_column = true;
 						},
-						Wild(_) => next_column = true,
-						Toggle(toggle) =>
+						AnyStone::Wild(_) => next_column = true,
+						AnyStone::Toggle(toggle) =>
 						{
 							next_column = !toggle.is_open();
 						},

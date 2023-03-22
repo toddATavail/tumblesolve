@@ -1,0 +1,20 @@
+solvable = yes
+board = 3-29
+wild = rby
+r = 9
+b = 27
+y = 11
+
+---
+
+* b r b y
+b b b r r
+* r b b y
+y b y b y
+b y r y r
+* r r r r
+r _ r r r
+r _ _ _ b
+r _ _ _ y
+r _ _ _ _
+_ + / + _

@@ -1,0 +1,20 @@
+solvable = yes
+board = 4-15
+colorlock = true
+r = 9
+b = 27
+y = 11
+
+---
+
+r b y r b
+y r y r b
+r r y y r
+r y / y y
+b r _ y r
+y r _ y y
+b y _ y r
+b _ _ y b
+_ _ _ b r
+_ _ _ r r
+_ _ _ b _

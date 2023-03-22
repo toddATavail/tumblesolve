@@ -2,7 +2,11 @@
   <dictionary name="todd">
     <words>
       <w>colorlock</w>
+      <w>egui</w>
+      <w>tlsv</w>
+      <w>tumblesolve</w>
       <w>tumblestone</w>
+      <w>untargetable</w>
     </words>
   </dictionary>
 </component>

@@ -1,6 +1,6 @@
 //
 // main.rs
-// Copyright 2019, Todd L Smith.
+// Copyright © 2019-2023, Todd L Smith.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
@@ -27,9 +27,6 @@
 // POSSIBILITY OF SUCH DAMAGE.
 //
 
-#![feature(nll)]
-#![feature(exclusive_range_pattern)]
-
 mod board;
 mod solve;
 
@@ -38,6 +35,10 @@ use std::fs::read_to_string;
 use std::io::{Error, stdin};
 use board::{Board, ParseError};
 
+/// Execute the solver against the board extracted from the command line. Our
+/// command-line parsing is trivial, so we don't need to bother with, e.g.,
+/// Clap. The sole argument is the board file (`.tsb`); there are several
+/// example boards in the project `examples` directory.
 fn main () -> Result<(), AppError>
 {
 	let args: Vec<String> = args().collect();

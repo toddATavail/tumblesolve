@@ -1,8 +1,8 @@
 [package]
 name = "tumblesolve"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Todd L. Smith <todd@availlang.org>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 tokesies = { git = "https://github.com/Jeffail/tokesies" }
